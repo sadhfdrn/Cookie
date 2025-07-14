@@ -101,13 +101,13 @@ class CookieCollectorService {
       });
       
       // Wait for any Cloudflare challenges
-      await page.waitForTimeout(5000);
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
       // Check if we're still on a Cloudflare page
       const title = await page.title();
       if (title.includes('Just a moment') || title.includes('Cloudflare')) {
         console.log('Waiting for Cloudflare challenge...');
-        await page.waitForTimeout(10000);
+        await new Promise(resolve => setTimeout(resolve, 10000));
       }
       
       const cookies = await page.cookies();
@@ -136,13 +136,13 @@ class CookieCollectorService {
       });
       
       // Wait for any Cloudflare challenges
-      await page.waitForTimeout(5000);
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
       // Check if we're still on a Cloudflare page
       const title = await page.title();
       if (title.includes('Just a moment') || title.includes('Cloudflare')) {
         console.log('Waiting for Cloudflare challenge...');
-        await page.waitForTimeout(10000);
+        await new Promise(resolve => setTimeout(resolve, 10000));
       }
       
       const cookies = await page.cookies();
@@ -218,18 +218,18 @@ class CookieCollectorService {
       });
       
       // Wait for any Cloudflare challenges
-      await page.waitForTimeout(options.initialWait || 5000);
+      await new Promise(resolve => setTimeout(resolve, options.initialWait || 5000));
       
       // Check if we're still on a Cloudflare page
       const title = await page.title();
       if (title.includes('Just a moment') || title.includes('Cloudflare')) {
         console.log('Waiting for Cloudflare challenge...');
-        await page.waitForTimeout(options.cloudflareWait || 10000);
+        await new Promise(resolve => setTimeout(resolve, options.cloudflareWait || 10000));
       }
       
       // Additional custom wait if specified
       if (options.additionalWait) {
-        await page.waitForTimeout(options.additionalWait);
+        await new Promise(resolve => setTimeout(resolve, options.additionalWait));
       }
       
       // Execute custom JavaScript if provided
@@ -519,4 +519,4 @@ async function startServer() {
   }
 }
 
-startServer(); 
+startServer();
