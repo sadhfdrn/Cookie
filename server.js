@@ -164,8 +164,8 @@ class CookieCollectorService {
     try {
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
       
-      console.log('Visiting kiwik.si...');
-      await page.goto('https://kiwik.si', {
+      console.log('Visiting kwik.si...');
+      await page.goto('https://kwik.si', {
         waitUntil: 'networkidle2',
         timeout: 60000
       });
