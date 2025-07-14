@@ -170,14 +170,14 @@ class CookieCollectorService {
         timeout: 60000
       });
       
-      // Wait for any Cloudflare challenges
-      await page.waitForTimeout(5000);
+      // FIXED: Replace deprecated page.waitForTimeout with Promise-based timeout
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
       // Check if we're still on a Cloudflare page
       const title = await page.title();
       if (title.includes('Just a moment') || title.includes('Cloudflare')) {
         console.log('Waiting for Cloudflare challenge...');
-        await page.waitForTimeout(10000);
+        await new Promise(resolve => setTimeout(resolve, 10000));
       }
       
       const cookies = await page.cookies();
@@ -483,7 +483,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// 404 handler - FIXED: Changed from '*' to a proper catch-all
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
