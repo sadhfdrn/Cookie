@@ -1,506 +1,185 @@
 // server.js
 const express = require('express');
-const puppeteer = require('puppeteer');
 const cors = require('cors');
+const path = require('path');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const compression = require('compression');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Import API routes
+const cookieRoutes = require('./api/cookies');
+const mediaRoutes = require('./api/media');
 
-// Rate limiting
-const limiter = rateLimit({
+// Security middleware
+app.use(helmet());
+app.use(compression());
+
+// CORS configuration
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+  credentials: true
+}));
+
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Global rate limiting
+const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  max: 200, // limit each IP to 200 requests per windowMs
+  message: {
+    error: 'Too many requests from this IP, please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-app.use('/api/', limiter);
+app.use(globalLimiter);
 
-class CookieCollectorService {
-  constructor() {
-    this.browser = null;
-    this.cookies = {
-      animepahe: null,
-      paheWin: null,
-      kiwik: null,
-      lastUpdated: null
-    };
-    this.isCollecting = false;
-    this.collectionInterval = null;
-  }
-
-  async init() {
-    try {
-      // Chrome executable path for browserless/chrome Docker image
-      const executablePath = process.env.CHROME_EXECUTABLE_PATH || '/usr/bin/google-chrome';
-      
-      this.browser = await puppeteer.launch({
-        executablePath,
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--disable-gpu',
-          '--disable-web-security',
-          '--disable-features=VizDisplayCompositor',
-          '--window-size=1920,1080',
-          '--no-first-run',
-          '--no-default-browser-check',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding'
-        ]
-      });
-      
-      console.log('Browser initialized successfully');
-      
-      // Collect cookies immediately on startup
-      await this.collectAllCookies();
-      
-      // Set up automatic collection every 30 minutes
-      this.collectionInterval = setInterval(async () => {
-        await this.collectAllCookies();
-      }, 30 * 60 * 1000); // 30 minutes
-      
-    } catch (error) {
-      console.error('Failed to initialize browser:', error);
-      throw error;
-    }
-  }
-
-  async visitAnimepahe() {
-    const page = await this.browser.newPage();
-    try {
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-      
-      console.log('Visiting animepahe.com...');
-      await page.goto('https://animepahe.com', {
-        waitUntil: 'networkidle2',
-        timeout: 60000
-      });
-      
-      // Wait for any Cloudflare challenges
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      // Check if we're still on a Cloudflare page
-      const title = await page.title();
-      if (title.includes('Just a moment') || title.includes('Cloudflare')) {
-        console.log('Waiting for Cloudflare challenge...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
-      }
-      
-      const cookies = await page.cookies();
-      const cookieString = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-      
-      console.log(`Animepahe cookies collected: ${cookies.length} cookies`);
-      return cookieString;
-      
-    } catch (error) {
-      console.error('Error visiting animepahe:', error);
-      return null;
-    } finally {
-      await page.close();
-    }
-  }
-
-  async visitPaheWin() {
-    const page = await this.browser.newPage();
-    try {
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-      
-      console.log('Visiting pahe.win...');
-      await page.goto('https://pahe.win', {
-        waitUntil: 'networkidle2',
-        timeout: 60000
-      });
-      
-      // Wait for any Cloudflare challenges
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      // Check if we're still on a Cloudflare page
-      const title = await page.title();
-      if (title.includes('Just a moment') || title.includes('Cloudflare')) {
-        console.log('Waiting for Cloudflare challenge...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
-      }
-      
-      const cookies = await page.cookies();
-      const cookieString = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-      
-      console.log(`Pahe.win cookies collected: ${cookies.length} cookies`);
-      return cookieString;
-      
-    } catch (error) {
-      console.error('Error visiting pahe.win:', error);
-      return null;
-    } finally {
-      await page.close();
-    }
-  }
-
-  async visitKiwik() {
-    const page = await this.browser.newPage();
-    try {
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-      
-      console.log('Visiting kwik.si...');
-      await page.goto('https://kwik.si', {
-        waitUntil: 'networkidle2',
-        timeout: 60000
-      });
-      
-      // FIXED: Replace deprecated page.waitForTimeout with Promise-based timeout
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      // Check if we're still on a Cloudflare page
-      const title = await page.title();
-      if (title.includes('Just a moment') || title.includes('Cloudflare')) {
-        console.log('Waiting for Cloudflare challenge...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
-      }
-      
-      const cookies = await page.cookies();
-      const cookieString = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-      
-      console.log(`Kiwik cookies collected: ${cookies.length} cookies`);
-      return cookieString;
-      
-    } catch (error) {
-      console.error('Error visiting kiwik:', error);
-      return null;
-    } finally {
-      await page.close();
-    }
-  }
-
-  // Generic method to visit any URL and collect cookies
-  async visitCustomUrl(url, options = {}) {
-    const page = await this.browser.newPage();
-    try {
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-      
-      console.log(`Visiting ${url}...`);
-      
-      // Set custom headers if provided
-      if (options.headers) {
-        await page.setExtraHTTPHeaders(options.headers);
-      }
-      
-      // Set viewport if provided
-      if (options.viewport) {
-        await page.setViewport(options.viewport);
-      }
-      
-      await page.goto(url, {
-        waitUntil: options.waitUntil || 'networkidle2',
-        timeout: options.timeout || 60000
-      });
-      
-      // Wait for any Cloudflare challenges
-      await new Promise(resolve => setTimeout(resolve, options.initialWait || 5000));
-      
-      // Check if we're still on a Cloudflare page
-      const title = await page.title();
-      if (title.includes('Just a moment') || title.includes('Cloudflare')) {
-        console.log('Waiting for Cloudflare challenge...');
-        await new Promise(resolve => setTimeout(resolve, options.cloudflareWait || 10000));
-      }
-      
-      // Additional custom wait if specified
-      if (options.additionalWait) {
-        await new Promise(resolve => setTimeout(resolve, options.additionalWait));
-      }
-      
-      // Execute custom JavaScript if provided
-      if (options.executeScript) {
-        await page.evaluate(options.executeScript);
-      }
-      
-      const cookies = await page.cookies();
-      const cookieString = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-      
-      console.log(`${url} cookies collected: ${cookies.length} cookies`);
-      return {
-        success: true,
-        cookies: cookieString,
-        cookieCount: cookies.length,
-        url: url,
-        timestamp: new Date().toISOString()
-      };
-      
-    } catch (error) {
-      console.error(`Error visiting ${url}:`, error);
-      return {
-        success: false,
-        error: error.message,
-        url: url,
-        timestamp: new Date().toISOString()
-      };
-    } finally {
-      await page.close();
-    }
-  }
-
-  async collectAllCookies() {
-    if (this.isCollecting) {
-      console.log('Collection already in progress, skipping...');
-      return;
-    }
-
-    this.isCollecting = true;
-    console.log('Starting cookie collection cycle...');
-    
-    try {
-      // Visit all sites concurrently for better performance
-      const results = await Promise.allSettled([
-        this.visitAnimepahe(),
-        this.visitPaheWin(),
-        this.visitKiwik()
-      ]);
-
-      // Process results
-      const [animepaheResult, paheWinResult, kiwikResult] = results;
-      
-      if (animepaheResult.status === 'fulfilled' && animepaheResult.value) {
-        this.cookies.animepahe = animepaheResult.value;
-      }
-      if (paheWinResult.status === 'fulfilled' && paheWinResult.value) {
-        this.cookies.paheWin = paheWinResult.value;
-      }
-      if (kiwikResult.status === 'fulfilled' && kiwikResult.value) {
-        this.cookies.kiwik = kiwikResult.value;
-      }
-
-      this.cookies.lastUpdated = new Date().toISOString();
-      console.log('Cookie collection cycle completed successfully');
-      
-    } catch (error) {
-      console.error('Error during cookie collection:', error);
-    } finally {
-      this.isCollecting = false;
-    }
-  }
-
-  getCookies() {
-    return this.cookies;
-  }
-
-  async destroy() {
-    if (this.collectionInterval) {
-      clearInterval(this.collectionInterval);
-    }
-    if (this.browser) {
-      await this.browser.close();
-    }
-  }
-}
-
-// Initialize the service
-const cookieService = new CookieCollectorService();
-
-// Helper function to validate URL
-function isValidUrl(string) {
-  try {
-    new URL(string);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-// Routes
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
-});
-
-app.get('/api/cookies', (req, res) => {
-  try {
-    const cookies = cookieService.getCookies();
-    
-    if (!cookies.lastUpdated) {
-      return res.status(503).json({ 
-        error: 'Cookies not yet collected. Please try again in a few moments.',
-        status: 'collecting'
-      });
-    }
-    
-    res.json({
-      success: true,
-      cookies: {
-        animepahe: cookies.animepahe,
-        pahewin: cookies.paheWin,
-        kiwik: cookies.kiwik
-      },
-      lastUpdated: cookies.lastUpdated
-    });
-    
-  } catch (error) {
-    console.error('Error serving cookies:', error);
-    res.status(500).json({ error: 'Internal server error' });
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
 
-// New endpoint to create cookies from custom URL
-app.post('/api/create-cookies', async (req, res) => {
-  try {
-    const { url, options = {} } = req.body;
-    
-    if (!url) {
-      return res.status(400).json({ error: 'URL is required' });
-    }
-    
-    if (!isValidUrl(url)) {
-      return res.status(400).json({ error: 'Invalid URL format' });
-    }
-    
-    // Security check - only allow HTTPS URLs
-    const parsedUrl = new URL(url);
-    if (parsedUrl.protocol !== 'https:') {
-      return res.status(400).json({ error: 'Only HTTPS URLs are allowed' });
-    }
-    
-    // Rate limiting for custom URL requests
-    if (cookieService.isCollecting) {
-      return res.status(429).json({ error: 'Service is busy, please try again later' });
-    }
-    
-    // Validate options
-    const validOptions = {};
-    if (options.timeout && typeof options.timeout === 'number' && options.timeout > 0 && options.timeout <= 120000) {
-      validOptions.timeout = options.timeout;
-    }
-    if (options.waitUntil && ['load', 'domcontentloaded', 'networkidle0', 'networkidle2'].includes(options.waitUntil)) {
-      validOptions.waitUntil = options.waitUntil;
-    }
-    if (options.initialWait && typeof options.initialWait === 'number' && options.initialWait >= 0 && options.initialWait <= 30000) {
-      validOptions.initialWait = options.initialWait;
-    }
-    if (options.cloudflareWait && typeof options.cloudflareWait === 'number' && options.cloudflareWait >= 0 && options.cloudflareWait <= 60000) {
-      validOptions.cloudflareWait = options.cloudflareWait;
-    }
-    if (options.additionalWait && typeof options.additionalWait === 'number' && options.additionalWait >= 0 && options.additionalWait <= 30000) {
-      validOptions.additionalWait = options.additionalWait;
-    }
-    if (options.headers && typeof options.headers === 'object') {
-      validOptions.headers = options.headers;
-    }
-    if (options.viewport && typeof options.viewport === 'object') {
-      validOptions.viewport = options.viewport;
-    }
-    
-    console.log(`Creating cookies for custom URL: ${url}`);
-    const result = await cookieService.visitCustomUrl(url, validOptions);
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        cookies: result.cookies,
-        cookieCount: result.cookieCount,
-        url: result.url,
-        timestamp: result.timestamp
-      });
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100MB limit
+    files: 10
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow images and videos
+    if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/')) {
+      cb(null, true);
     } else {
-      res.status(400).json({
-        success: false,
-        error: result.error,
-        url: result.url,
-        timestamp: result.timestamp
-      });
+      cb(new Error('Only image, video, and audio files are allowed!'));
     }
-    
-  } catch (error) {
-    console.error('Error creating cookies:', error);
-    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.post('/api/refresh', async (req, res) => {
-  try {
-    if (cookieService.isCollecting) {
-      return res.status(429).json({ error: 'Collection already in progress' });
-    }
-    
-    // Trigger immediate collection
-    cookieService.collectAllCookies();
-    
-    res.json({ 
-      success: true, 
-      message: 'Cookie refresh triggered',
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('Error refreshing cookies:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Make upload middleware available to routes
+app.use('/api/media', upload.any());
 
-app.get('/api/status', (req, res) => {
-  const cookies = cookieService.getCookies();
-  
+// Static file serving
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/output', express.static(path.join(__dirname, 'output')));
+
+// API Routes
+app.use('/api/cookies', cookieRoutes);
+app.use('/api/media', mediaRoutes);
+
+// Health check endpoint
+app.get('/health', (req, res) => {
   res.json({
-    isCollecting: cookieService.isCollecting,
-    lastUpdated: cookies.lastUpdated,
-    hasCookies: {
-      animepahe: !!cookies.animepahe,
-      paheWin: !!cookies.paheWin,
-      kiwik: !!cookies.kiwik
-    },
-    nextCollection: cookies.lastUpdated ? 
-      new Date(new Date(cookies.lastUpdated).getTime() + 30 * 60 * 1000).toISOString() : 
-      'unknown'
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    version: process.env.npm_package_version || '1.0.0',
+    services: {
+      ffmpeg: process.env.FFMPEG_PATH || '/usr/bin/ffmpeg',
+      chrome: process.env.CHROME_EXECUTABLE_PATH || '/usr/bin/google-chrome'
+    }
   });
 });
 
-// Error handling
+// API documentation endpoint
+app.get('/api', (req, res) => {
+  res.json({
+    name: 'Cookie & Media Processing API',
+    version: '1.0.0',
+    endpoints: {
+      cookies: {
+        'GET /api/cookies': 'Get collected cookies',
+        'POST /api/cookies/refresh': 'Refresh cookie collection',
+        'POST /api/cookies/create': 'Create cookies from custom URL',
+        'GET /api/cookies/status': 'Get collection status'
+      },
+      media: {
+        'POST /api/media/process': 'Process media files',
+        'POST /api/media/watermark': 'Add watermarks to media',
+        'POST /api/media/convert': 'Convert media formats',
+        'POST /api/media/optimize': 'Optimize media files',
+        'GET /api/media/info': 'Get media file information'
+      }
+    }
+  });
+});
+
+// Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  
+  // Handle multer errors
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File too large. Maximum size is 100MB.' });
+    }
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'Too many files. Maximum is 10 files.' });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+  
+  // Handle other errors
+  const statusCode = err.statusCode || 500;
+  res.status(statusCode).json({
+    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
+    timestamp: new Date().toISOString(),
+    requestId: req.id || 'unknown'
+  });
 });
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({
+    error: 'Route not found',
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('Received SIGTERM, shutting down gracefully...');
-  await cookieService.destroy();
-  process.exit(0);
-});
+const shutdown = async (signal) => {
+  console.log(`Received ${signal}, shutting down gracefully...`);
+  
+  // Close server
+  if (server) {
+    server.close(() => {
+      console.log('HTTP server closed.');
+      process.exit(0);
+    });
+  }
+  
+  // Force exit after 30 seconds
+  setTimeout(() => {
+    console.error('Could not close connections in time, forcefully shutting down');
+    process.exit(1);
+  }, 30000);
+};
 
-process.on('SIGINT', async () => {
-  console.log('Received SIGINT, shutting down gracefully...');
-  await cookieService.destroy();
-  process.exit(0);
-});
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Start the server
-async function startServer() {
-  try {
-    await cookieService.init();
-    
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Cookie service running on port ${PORT}`);
-      console.log(`Health check: http://localhost:${PORT}/health`);
-      console.log(`Cookies endpoint: http://localhost:${PORT}/api/cookies`);
-      console.log(`Create cookies endpoint: http://localhost:${PORT}/api/create-cookies`);
-    });
-    
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-  }
-}
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📋 Health check: http://localhost:${PORT}/health`);
+  console.log(`🍪 Cookies API: http://localhost:${PORT}/api/cookies`);
+  console.log(`🎬 Media API: http://localhost:${PORT}/api/media`);
+  console.log(`📚 API Documentation: http://localhost:${PORT}/api`);
+});
 
-startServer();
+module.exports = app;
