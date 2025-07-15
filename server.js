@@ -19,22 +19,6 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// API Key authentication middleware
-const authenticateApiKey = (req, res, next) => {
-  const apiKey = req.headers['x-api-key'] || req.query.apiKey;
-  const validApiKey = process.env.API_KEY;
-  
-  if (!validApiKey) {
-    return res.status(500).json({ error: 'API_KEY not configured on server' });
-  }
-  
-  if (!apiKey || apiKey !== validApiKey) {
-    return res.status(401).json({ error: 'Invalid or missing API key' });
-  }
-  
-  next();
-};
-
 class CookieCollectorService {
   constructor() {
     this.browser = null;
@@ -338,7 +322,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/api/cookies', authenticateApiKey, (req, res) => {
+app.get('/api/cookies', (req, res) => {
   try {
     const cookies = cookieService.getCookies();
     
@@ -366,7 +350,7 @@ app.get('/api/cookies', authenticateApiKey, (req, res) => {
 });
 
 // New endpoint to create cookies from custom URL
-app.post('/api/create-cookies', authenticateApiKey, async (req, res) => {
+app.post('/api/create-cookies', async (req, res) => {
   try {
     const { url, options = {} } = req.body;
     
@@ -439,7 +423,7 @@ app.post('/api/create-cookies', authenticateApiKey, async (req, res) => {
   }
 });
 
-app.post('/api/refresh', authenticateApiKey, async (req, res) => {
+app.post('/api/refresh', async (req, res) => {
   try {
     if (cookieService.isCollecting) {
       return res.status(429).json({ error: 'Collection already in progress' });
@@ -460,7 +444,7 @@ app.post('/api/refresh', authenticateApiKey, async (req, res) => {
   }
 });
 
-app.get('/api/status', authenticateApiKey, (req, res) => {
+app.get('/api/status', (req, res) => {
   const cookies = cookieService.getCookies();
   
   res.json({
